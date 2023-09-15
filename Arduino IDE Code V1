@@ -21,9 +21,9 @@ SoftwareSerial hc05(10, 11); // RX, TX
 // Define control variables and thresholds
 float targetTemp = 68.0; // Target temperature in Fahrenheit
 float targetRH = 59.7; // Initial target relative humidity in %
-float maxHumidity = 62.0; // Maximum humidity in %
-float maxFanSpeed = 55; // Maximum fan speed in %
-float minFanSped = 15; // Minimum fan speed in %
+float maxHumidity = 62.0; // Maximum humidity
+float maxFanSpeed = 55; // Maximum fan speed
+float minFanSped = 15; // Minimum fan speed
 float prevHumidity = 0.0; // To track previous humidity value
 float peakHumidity = 0.0; // To track the peak humidity value
 bool hasPeaked = false; // Flag to check if humidity has peaked
