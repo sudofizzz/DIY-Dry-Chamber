@@ -1,19 +1,50 @@
-# DIY-Dry-Chamber
-A collaborative effort to improve upon an open source code for DIY Dry Chambers
+DIY Cannabis Drying and Curing Chamber Overview
 
-**🌀 Hysteresis in Environmental Control:**
-Hysteresis is a fundamental concept in control systems. In the context of our chamber, it prevents frequent on-off cycling of devices like humidifiers or coolers. For instance, if our target humidity is 60%, we might set our humidifier to kick in at 58% and turn off at 62%. This buffer ensures our devices aren't constantly toggling, thus prolonging their lifespan and ensuring a more stable environment.
+This project leverages the power of Arduino to create a controlled environment for drying and curing cannabis. By maintaining precise temperature and humidity levels, this chamber ensures optimal preservation of terpenes and cannabinoids, leading to a superior end product. Features
 
-**🔥 PID Systems:**
-PID stands for Proportional-Integral-Derivative. It's a type of control loop feedback mechanism (or controller) widely used in industrial control systems. In simple terms:
+Thermoelectric Cooler Control: The Arduino manages a relay switch to control the cooler, ensuring the temperature remains within the desired range.
+Humidifier Control: An external humidifier is controlled via a relay switch to maintain the desired humidity level inside the chamber.
+Fan Speed Management: Intake and exhaust fan speeds are dynamically adjusted based on the current humidity level.
+Bluetooth Commands: The system integrates an HC-05 Bluetooth module, allowing for remote management and monitoring.
+Real-time Clock: With the RTC_DS3231 module, the system tracks the drying and curing cycles' progression.
+Components
 
-    P (Proportional): Reacts based on the present error.
-    I (Integral): Reacts based on the accumulation of past errors.
-    D (Derivative): Predicts future error based on its rate of change.
+Arduino Uno
+DHT22 Temperature and Humidity Sensor
+HC-05 Bluetooth Module
+RTC_DS3231 Real-time Clock Module
+Relay Modules
+Thermoelectric Cooler
+Analog Humidifier
+Centrifugal Fans
+Setup
 
-For our chamber, a PID system can help in maintaining a precise temperature and humidity level. It adjusts the output (like fan speed or heater power) in real-time to keep the environment as close to our target values as possible.
+Thermoelectric Cooler
+A thermoelectric cooler offers precise temperature control, crucial for preserving the quality of the cannabis during the drying and curing process. 2. Humidifier
 
-**📈 Preemptive Triggering through Peaks & Lows:**
-One advanced feature we can implement is having our system recognize patterns. If our sensors detect a rapid rise in humidity, even before it crosses our threshold, our system can preemptively activate the dehumidifier. Similarly, if a rapid drop is detected, the humidifier can be activated. This predictive approach can be crucial during critical phases of drying and curing, ensuring the environment remains stable.
+Ensure you use a simple analog humidifier with a manual on/off switch. This allows the relay to control it without complications. 3. Centrifugal Fans
 
-I'd love to hear your thoughts, experiences, and any innovative ideas you might have implemented in your setups. Let's discuss how we can further refine our systems, making them smarter and more efficient!
+Centrifugal fans are recommended due to their orientation, which saves space inside the chamber and requires smaller ports. 4. Arduino Uno
+
+The heart of the system, the Arduino Uno, manages all the components and ensures they work in harmony. Wiring and Connections
+
+Powering the Arduino: The Arduino can be powered via a USB connection or an external power supply.
+DHT22 Sensor: Connect the sensor's data pin to A3 on the Arduino.
+Relay Modules: Wire the cooler and humidifier to their respective relay modules and connect them to the Arduino pins as defined in the code.
+Centrifugal Fans: These are powered independently using an external power supply. Connect the fans' power and ground pins to a +- dongle.
+HC-05 Bluetooth Module: Connect the RX and TX pins to pins 10 and 11 on the Arduino, respectively.
+RTC_DS3231 Module: Connect this module to the Arduino using the I2C pins.
+Chamber Modifications
+
+Use a jigsaw to cut ports for the centrifugal fans and to route the DHT22 sensor cables.
+Consider using 3D printed 90-degree pieces for the exterior intake fan.
+Silicon mats can be used for food-grade safe shelving inside the chamber.
+Software Setup
+
+Install the Arduino IDE.
+Load the provided code into the IDE.
+Ensure you have the necessary libraries installed (DHT.h, Wire.h, RTClib.h, SoftwareSerial.h).
+Upload the code to the Arduino.
+Contributing
+
+Feel free to fork this repository and submit pull requests. Any contributions, whether it's refining the code or improving the hardware setup, are highly appreciated!
