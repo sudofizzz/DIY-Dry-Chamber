@@ -1,0 +1,197 @@
+#include <DHT.h>
+#include <Wire.h>
+#include <RTClib.h>
+#include <SoftwareSerial.h>
+
+#define DHTPIN A3
+#define DHTTYPE DHT22
+#define FAN1_PIN 3
+#define FAN2_PIN 6
+#define INTERIOR_FAN_PIN 5
+#define COOLER_RELAY_PIN 7
+#define IOT_RELAY_PIN 8
+
+DHT dht(DHTPIN, DHTTYPE);
+RTC_DS3231 rtc;
+SoftwareSerial hc05(10, 11); // RX, TX
+
+float targetTemp = 68.0; // Target temperature in Fahrenheit
+float targetRH = 59.7; // Initial target relative humidity in %
+
+float prevHumidity = 0.0; // To track previous humidity value
+float peakHumidity = 0.0; // To track the peak humidity value
+bool hasPeaked = false; // Flag to check if humidity has peaked
+int fanSpeed = 55; // Global variable to track fan speed
+
+DateTime startCycleTime;
+bool isDryCycle = true; // Start with the dry cycle
+
+void setup() {
+  Serial.begin(9600);
+  hc05.begin(9600);
+  dht.begin();
+  Wire.begin();
+
+  if (!rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+
+  pinMode(FAN1_PIN, OUTPUT);
+  pinMode(FAN2_PIN, OUTPUT);
+  pinMode(INTERIOR_FAN_PIN, OUTPUT);
+  pinMode(COOLER_RELAY_PIN, OUTPUT);
+  pinMode(IOT_RELAY_PIN, OUTPUT);
+
+  startCycleTime = rtc.now(); // Initialize the cycle start time
+}
+
+float getTargetRH(DateTime currentTime) {
+  float currentTargetRH;
+  TimeSpan elapsed = currentTime - startCycleTime;
+
+  if (isDryCycle) {
+    if (elapsed.days() <= 6) {
+      currentTargetRH = 59.70 - (elapsed.days() * 0.5);
+    } else {
+      isDryCycle = false;
+      startCycleTime = currentTime;
+      currentTargetRH = 56.9;
+    }
+  } else {
+    if (elapsed.days() <= 30) {
+      currentTargetRH = 56.9 + (elapsed.days() * 0.2);
+    } else {
+      isDryCycle = true;
+      startCycleTime = currentTime;
+      currentTargetRH = 59.8;
+    }
+  }
+
+  return currentTargetRH;
+}
+
+void loop() {
+  float h = dht.readHumidity();
+  float t = dht.readTemperature(); // Celsius
+  float tF = t * 9.0 / 5.0 + 32.0; // Fahrenheit
+  DateTime now = rtc.now();
+  targetRH = getTargetRH(now);
+
+  // Cooler control with hysteresis
+  if (tF >= targetTemp + 0.1) {
+    digitalWrite(COOLER_RELAY_PIN, HIGH);
+  } else if (tF <= targetTemp - 0.1) {
+    digitalWrite(COOLER_RELAY_PIN, LOW);
+  }
+
+ // Humidifier control based on humidity
+  if (h > 62.0) {
+     digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF
+  } else if (h < targetRH - 3.0) {
+     digitalWrite(IOT_RELAY_PIN, HIGH); // Turn ON
+  } else if (h > targetRH && h < targetRH + 1.5 && h < prevHumidity) {
+     digitalWrite(IOT_RELAY_PIN, HIGH); // Turn ON
+  } else if (h < targetRH && h > targetRH - 1.5 && h > prevHumidity) {
+      digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF
+  } else if (h > targetRH && h > prevHumidity && digitalRead(IOT_RELAY_PIN) == HIGH) {
+     digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF if RH is trending upwards while above target RH and humidifier is ON
+  }
+
+
+  // Fan control logic
+  if (h > 62) {
+    fanSpeed = 55;
+  } else if (h < targetRH) {
+    fanSpeed = 15;
+  } else {
+    if (h > prevHumidity + 0.1 && h > targetRH) {
+      fanSpeed = 55;
+      hasPeaked = false;
+      peakHumidity = h;
+    } else if (h < peakHumidity - 0.1 && !hasPeaked) {
+      hasPeaked = true;
+    }
+
+    if (hasPeaked) {
+      fanSpeed = max(15, fanSpeed - 15);
+    }
+
+    fanSpeed = constrain(fanSpeed, 15, 55);
+  }
+
+  analogWrite(FAN1_PIN, fanSpeed);
+  analogWrite(FAN2_PIN, fanSpeed);
+
+  // Output data to serial
+  Serial.print(now.year(), DEC);
+  Serial.print('/');
+  Serial.print(now.month(), DEC);
+  Serial.print('/');
+  Serial.print(now.day(), DEC);
+  Serial.print(" ");
+  Serial.print(now.hour(), DEC);
+  Serial.print(':');
+  Serial.print(now.minute(), DEC);
+  Serial.print(':');
+  Serial.print(now.second(), DEC);
+  Serial.print(", Dry Bulb Temp: ");
+  Serial.print(tF);
+  Serial.print(", RH: ");
+  Serial.print(h);
+  Serial.print(", Fan Speed: ");
+  Serial.print(fanSpeed);
+  Serial.print(", Cooler: ");
+  Serial.print(digitalRead(COOLER_RELAY_PIN) == HIGH ? "ON" : "OFF");
+  Serial.print(", Humidifier: ");
+  Serial.println(digitalRead(IOT_RELAY_PIN) == HIGH ? "ON" : "OFF");
+
+  prevHumidity = h;
+
+  // Check for HC-05 commands
+  if (hc05.available()) {
+    String command = hc05.readString();
+    handleCommand(command, tF, h, fanSpeed);
+  }
+
+  delay(2000);
+}
+
+void handleCommand(String command, float tF, float h, int fanSpeed) {
+  if (command.startsWith("REPORT")) {
+    TimeSpan elapsed = rtc.now() - startCycleTime;
+    float cycleCompletion = (isDryCycle ? elapsed.days() / 6.0 : elapsed.days() / 30.0) * 100;
+
+    hc05.print("Dry Bulb Temp: ");
+    hc05.print(targetTemp);
+    hc05.print(", RH Target: ");
+    hc05.print(targetRH);
+    hc05.print(", Cycle: ");
+    hc05.print(isDryCycle ? "Dry" : "Cure");
+    hc05.print(", Completion: ");
+    hc05.print(cycleCompletion);
+    hc05.print("%, Hours Elapsed: ");
+    hc05.println(elapsed.totalseconds() / 3600.0);
+  } else if (command.startsWith("DATAREQ")) {
+    hc05.print("Dry Bulb Temp: ");
+    hc05.print(tF);
+    hc05.print(", RH: ");
+    hc05.print(h);
+    hc05.print(", Fan Speed: ");
+    hc05.print(fanSpeed);
+    hc05.print(", Cooler: ");
+    hc05.print(digitalRead(COOLER_RELAY_PIN) == HIGH ? "ON" : "OFF");
+    hc05.print(", Humidifier: ");
+    hc05.println(digitalRead(IOT_RELAY_PIN) == HIGH ? "ON" : "OFF");
+  } else if (command.startsWith("SET_TEMP")) {
+    targetTemp = command.substring(9).toFloat();
+  } else if (command.startsWith("SET_RH")) {
+    targetRH = command.substring(7).toFloat();
+  } else if (command.startsWith("START_DRY_CYCLE")) {
+    isDryCycle = true;
+    startCycleTime = rtc.now();
+  } else if (command.startsWith("START_CURE_CYCLE")) {
+    isDryCycle = false;
+    startCycleTime = rtc.now();
+  }
+}
