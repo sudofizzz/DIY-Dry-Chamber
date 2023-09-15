@@ -1,5 +1,5 @@
 # DIY-Dry-Chamber
-A copllaborative effort to improve upon an open source code for DIY Dry Chambers
+A collaborative effort to improve upon an open source code for DIY Dry Chambers
 
 **🌀 Hysteresis in Environmental Control:**
 Hysteresis is a fundamental concept in control systems. In the context of our chamber, it prevents frequent on-off cycling of devices like humidifiers or coolers. For instance, if our target humidity is 60%, we might set our humidifier to kick in at 58% and turn off at 62%. This buffer ensures our devices aren't constantly toggling, thus prolonging their lifespan and ensuring a more stable environment.
