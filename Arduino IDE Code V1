@@ -132,11 +132,11 @@ void loop() {
 
     if (hasPeaked) {
       // If humidity has peaked, gradually reduce fan speed but keep it above the minimum
-      fanSpeed = max(minFanSped, fanSpeed - minFanSped);
+      fanSpeed = max(minFanSpeed, fanSpeed - minFanSpeed);
     }
 
     // Ensure fan speed stays within the defined minimum and maximum values
-    fanSpeed = constrain(fanSpeed, minFanSped, maxFanSpeed); // Constrain fanSpeed between min and max speeds
+    fanSpeed = constrain(fanSpeed, minFanSpeed, maxFanSpeed); // Constrain fanSpeed between min and max speeds
   }
 
   // Write fan speed to fans
