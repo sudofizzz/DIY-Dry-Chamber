@@ -238,16 +238,16 @@ void handleCommand(String command, float tF, float currentHumidity, int fanSpeed
   e.g., SET_TEMP 70 would set the target temperature to 70°F
   */
   else if (command.startsWith("SET_TEMPF")) {
-    targetTemp = command.substring(9).toFloat();
+    targetTemp = command.substring(10).toFloat();
   }
   /*
   SET_TEMPC
-  This command allows you to set a new target temperature in fahrenheit
+  This command allows you to set a new target temperature in celsius
   The desired temperature value follows the command
-  e.g., SET_TEMP 70 would set the target temperature to 70°F
+  e.g., SET_TEMP 70 would set the target temperature to 70°C
   */
-  else if (command.startsWith("SET_TEMPF")) {
-    float convertedTemp = toFahrenheit(command.substring(9).toFloat());
+  else if (command.startsWith("SET_TEMPC")) {
+    float convertedTemp = toFahrenheit(command.substring(10).toFloat());
     targetTemp = convertedTemp;
   }
   /*
