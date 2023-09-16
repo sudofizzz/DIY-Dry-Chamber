@@ -29,6 +29,13 @@ float peakHumidity = 0.0; // To track the peak humidity value
 bool hasPeaked = false; // Flag to check if humidity has peaked
 int fanSpeed = 55; // Global variable to track fan speed
 
+float avgTemperature = 0.0;
+float avgHumidity = 0.0;
+float totalTemperature = 0.0; // Accumulator for temperature
+float totalHumidity = 0.0;    // Accumulator for humidity
+int samplesPerHour = 0;       // Counter for samples within the hour
+
+
 DateTime startCycleTime; // Represents start time of the current cycle
 bool isDryCycle = true; // Start with the dry cycle as true
 
@@ -50,6 +57,13 @@ void setup() {
   pinMode(IOT_RELAY_PIN, OUTPUT);
 
   startCycleTime = rtc.now(); // Initialize the cycle start time
+}
+
+// Function to update average temp and humidity over time
+void updateAverages() {
+  totalTemperature += dht.readTemperature();
+  totalHumidity += dht.readHumidity();
+  samplesPerHour++;
 }
 
 // Function to calculate the target relative humidity based on the current time
@@ -91,6 +105,20 @@ void loop() {
   float tF = toFahrenheit(tC); // Fahrenheit
   DateTime now = rtc.now();
   targetRH = getTargetRH(now);
+
+  // Update temp and humid averages every hour
+  if (now.minute() == 0) {
+    if (samplesPerHour > 0) {
+      // Calculate average temp and humid
+      avgTemperature = totalTemperature / samplesPerHour;
+      avgHumidity = totalHumidity / samplesPerHour;
+      
+      // Reset accumulators and counter
+      totalTemperature = 0.0;
+      totalHumidity = 0.0;
+      samplesPerHour = 0;
+    }
+  }
 
   // Cooler control with hysteresis based off current fahrenheit temperature
   if (tF >= targetTemp + 0.1) {
@@ -214,7 +242,9 @@ void handleCommand(String command, float tF, float currentHumidity, int fanSpeed
   DATAREQ
   This command requests data like,
   the dry bulb temperature,
+  average temperature in past hour,
   relative humidity (RH),
+  average humidity in past hour,
   fan speed,
   cooler status (ON/OFF),
   and humidifier status (ON/OFF)
@@ -222,8 +252,12 @@ void handleCommand(String command, float tF, float currentHumidity, int fanSpeed
   else if (command.startsWith("DATAREQ")) {
     hc05.print("Dry Bulb Temp: ");
     hc05.print(tF);
+    hc05.print("Average Temperature In Past Hour: ");
+    hc05.print(avgTemperature);
     hc05.print(", RH: ");
     hc05.print(currentHumidity);
+    hc05.print("Average Humidity In Past Hour: ");
+    hc05.print(avgHumidity);
     hc05.print(", Fan Speed: ");
     hc05.print(fanSpeed);
     hc05.print(", Cooler: ");
