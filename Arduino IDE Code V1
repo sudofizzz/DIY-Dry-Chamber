@@ -5,32 +5,32 @@
 #include <SoftwareSerial.h>
 
 // Define pin and sensor constants
-#define DHTPIN A3
-#define DHTTYPE DHT22
-#define FAN1_PIN 3
-#define FAN2_PIN 6
-#define INTERIOR_FAN_PIN 5
-#define COOLER_RELAY_PIN 7
-#define IOT_RELAY_PIN 8
+#define DHTPIN A3 // Pin for DHT22 sensor
+#define DHTTYPE DHT22 // DHT type
+#define FAN1_PIN 3 // Fan 1 pin
+#define FAN2_PIN 6 // Fan 2 pin
+#define INTERIOR_FAN_PIN 5 // Interior fan pin
+#define COOLER_RELAY_PIN 7 // Cooler relay pin
+#define IOT_RELAY_PIN 8 // IOT relay pin
 
 // Initialize sensor objects
-DHT dht(DHTPIN, DHTTYPE);
-RTC_DS3231 rtc;
-SoftwareSerial hc05(10, 11); // RX, TX
+DHT dht(DHTPIN, DHTTYPE); // Initializing temp and humid sensor
+RTC_DS3231 rtc; // Initializing time sensor
+SoftwareSerial hc05(10, 11); // Initializing bluetooth module
 
 // Define control variables and thresholds
 float targetTemp = 68.0; // Target temperature in Fahrenheit
 float targetRH = 59.7; // Initial target relative humidity in %
 float maxHumidity = 62.0; // Maximum humidity
 float maxFanSpeed = 55; // Maximum fan speed
-float minFanSped = 15; // Minimum fan speed
+float minFanSpeed = 15; // Minimum fan speed
 float prevHumidity = 0.0; // To track previous humidity value
 float peakHumidity = 0.0; // To track the peak humidity value
 bool hasPeaked = false; // Flag to check if humidity has peaked
 int fanSpeed = 55; // Global variable to track fan speed
 
-float avgTemperature = 0.0;
-float avgHumidity = 0.0;
+float avgTemperature = 0.0; // Avg temp in past hour
+float avgHumidity = 0.0; // Avg humid in past hour
 float totalTemperature = 0.0; // Accumulator for temperature
 float totalHumidity = 0.0;    // Accumulator for humidity
 int samplesPerHour = 0;       // Counter for samples within the hour
@@ -185,8 +185,12 @@ void loop() {
   Serial.print(now.second(), DEC);
   Serial.print(", Dry Bulb Temp: ");
   Serial.print(tF);
+  Serial.print("Average Temperature In Past Hour: ");
+  Serial.print(avgTemperature);
   Serial.print(", RH: ");
   Serial.print(currentHumidity);
+  Serial.print("Average Humidity In Past Hour: ");
+  Serial.print(avgHumidity);
   Serial.print(", Fan Speed: ");
   Serial.print(fanSpeed);
   Serial.print(", Cooler: ");
