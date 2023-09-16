@@ -120,41 +120,63 @@ void loop() {
     }
   }
 
-  // Cooler control with hysteresis based off current fahrenheit temperature
-  if (tF >= targetTemp + 0.1) {
-    digitalWrite(COOLER_RELAY_PIN, HIGH);
-  } else if (tF <= targetTemp - 0.1) {
-    digitalWrite(COOLER_RELAY_PIN, LOW);
-  }
+  // Define delay constants
+const unsigned long stateChangeDelay = 3000; // 3 seconds (adjust as needed)
+static unsigned long lastStateChangeTime = 0; // Time of last state change in milliseconds
 
-  // Humidifier control based on current humidity
+// Cooler control with hysteresis based off current fahrenheit temperature
+const float coolerHysteresis = 0.1;
+if (millis() - lastStateChangeTime >= stateChangeDelay) {
+  if (tF >= targetTemp + coolerHysteresis) {
+    digitalWrite(COOLER_RELAY_PIN, HIGH);
+    lastStateChangeTime = millis(); // Update the last state change time
+  } else if (tF <= targetTemp - coolerHysteresis) {
+    digitalWrite(COOLER_RELAY_PIN, LOW);
+    lastStateChangeTime = millis(); // Update the last state change time
+  }
+}
+
+// Humidifier control based on current humidity
+const float humidifierHysteresis = 3.0;
+const float humidifierHysteresis2 = 1.5;
+if (millis() - lastStateChangeTime >= stateChangeDelay) {
   if (currentHumidity > maxHumidity) {
     digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF
-  } else if (currentHumidity < targetRH - 3.0) {
+    lastStateChangeTime = millis(); // Update the last state change time
+  } else if (currentHumidity < targetRH - humidifierHysteresis) {
     digitalWrite(IOT_RELAY_PIN, HIGH); // Turn ON
-  } else if (currentHumidity > targetRH && currentHumidity < targetRH + 1.5 && currentHumidity < prevHumidity) {
+    lastStateChangeTime = millis(); // Update the last state change time
+  } else if (currentHumidity > targetRH && currentHumidity < targetRH + humidifierHysteresis2 && currentHumidity < prevHumidity) {
     digitalWrite(IOT_RELAY_PIN, HIGH); // Turn ON
-  } else if (currentHumidity < targetRH && currentHumidity > targetRH - 1.5 && currentHumidity > prevHumidity) {
+    lastStateChangeTime = millis(); // Update the last state change time
+  } else if (currentHumidity < targetRH && currentHumidity > targetRH - humidifierHysteresis2 && currentHumidity > prevHumidity) {
     digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF
+    lastStateChangeTime = millis(); // Update the last state change time
   } else if (currentHumidity > targetRH && currentHumidity > prevHumidity && digitalRead(IOT_RELAY_PIN) == HIGH) {
     digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF if RH is trending upwards while above target RH and humidifier is ON
+    lastStateChangeTime = millis(); // Update the last state change time
   }
+}
 
-  // Fan control logic base on current humidity
+// Fan control logic base on current humidity
+const float fanSpeedHysteresis = 0.1;
+if (millis() - lastStateChangeTime >= stateChangeDelay) {
   if (currentHumidity > maxHumidity) {
     // If humidity exceeds the maximum threshold, set fan speed to maximum
     fanSpeed = maxFanSpeed;
+    lastStateChangeTime = millis(); // Update the last state change time
   } else if (currentHumidity < targetRH) {
     // If humidity is below the target, set fan speed to minimum
     fanSpeed = minFanSpeed;
+    lastStateChangeTime = millis(); // Update the last state change time
   } else {
     // Check if humidity has significantly increased and is above the target
-    if (currentHumidity > prevHumidity + 0.1 && currentHumidity > targetRH) {
+    if (currentHumidity > prevHumidity + fanSpeedHysteresis && currentHumidity > targetRH) {
       fanSpeed = maxFanSpeed; // Increase fan speed to the maximum
       hasPeaked = false; // Reset the 'hasPeaked' flag
       peakHumidity = currentHumidity; // Update the peak humidity value
       // Check if humidity has significantly decreased and hasn't peaked yet
-    } else if (currentHumidity < peakHumidity - 0.1 && !hasPeaked) {
+    } else if (currentHumidity < peakHumidity - fanSpeedHysteresis && !hasPeaked) {
       hasPeaked = true; // Set the 'hasPeaked' flag to true
     }
 
@@ -165,7 +187,10 @@ void loop() {
 
     // Ensure fan speed stays within the defined minimum and maximum values
     fanSpeed = constrain(fanSpeed, minFanSpeed, maxFanSpeed); // Constrain fanSpeed between min and max speeds
+    lastStateChangeTime = millis(); // Update the last state change time
   }
+}
+
 
   // Write fan speed to fans
   analogWrite(FAN1_PIN, fanSpeed);
