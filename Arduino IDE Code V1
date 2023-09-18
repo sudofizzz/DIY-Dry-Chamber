@@ -27,14 +27,26 @@ float minFanSpeed = 15; // Minimum fan speed
 float prevHumidity = 0.0; // To track previous humidity value
 float peakHumidity = 0.0; // To track the peak humidity value
 bool hasPeaked = false; // Flag to check if humidity has peaked
+bool customRH = false; // Flag to check if using a custom target rH from hc05 command
+bool debug = false; // Flag to log messages to HC05 for debugging
 int fanSpeed = 55; // Global variable to track fan speed
 
+// Variables for calculating averages
 float avgTemperature = 0.0; // Avg temp in past hour
 float avgHumidity = 0.0; // Avg humid in past hour
 float totalTemperature = 0.0; // Accumulator for temperature
-float totalHumidity = 0.0;    // Accumulator for humidity
-int samplesPerHour = 0;       // Counter for samples within the hour
+float totalHumidity = 0.0; // Accumulator for humidity
+unsigned int samplesPerHour = 0; // Counter for samples within the hour (unsigned to prevent negative numbers)
 
+// Hysteresis variables
+const float humidifierHysteresis = 3.0;
+const float humidifierHysteresis2 = 1.5;
+const float coolerHysteresis = 0.1;
+const float fanSpeedHysteresis = 0.1;
+
+// Delay constants
+const unsigned long stateChangeDelay = 3000; // 3 seconds (adjust as needed) (unsigned to prevent negative numbers)
+static unsigned long lastStateChangeTime = 0; // Time of last state change in milliseconds (unsigned to prevent negative numbers)
 
 DateTime startCycleTime; // Represents start time of the current cycle
 bool isDryCycle = true; // Start with the dry cycle as true
@@ -50,6 +62,7 @@ void setup() {
     while (1);
   }
 
+  // Initializing fan and relay pins
   pinMode(FAN1_PIN, OUTPUT);
   pinMode(FAN2_PIN, OUTPUT);
   pinMode(INTERIOR_FAN_PIN, OUTPUT);
@@ -59,11 +72,219 @@ void setup() {
   startCycleTime = rtc.now(); // Initialize the cycle start time
 }
 
+void loop() {
+  float currentHumidity = dht.readHumidity(); // Humidity
+  float tC = dht.readTemperature(); // Celsius
+  float tF = toFahrenheit(tC); // Fahrenheit
+  DateTime now = rtc.now(); // Current time
+  
+  if (!customRH)
+  {
+    targetRH = getTargetRH(now); // Target rH
+  }
+
+  updateAverages(); // Update averages to calculate average temp and humid each hour
+
+  // Update temp and humid averages every hour
+  if (now.minute() == 0) {
+    if (samplesPerHour > 0) {
+      // Calculate average temp and humid
+      avgTemperature = totalTemperature / samplesPerHour;
+      avgHumidity = totalHumidity / samplesPerHour;
+      
+      // Reset accumulators and counter
+      totalTemperature = 0.0;
+      totalHumidity = 0.0;
+      samplesPerHour = 0;
+    }
+  }
+
+// Cooler control with hysteresis based off current fahrenheit temperature
+if (millis() - lastStateChangeTime >= stateChangeDelay) {
+  if (tF >= targetTemp + coolerHysteresis) {
+    digitalWrite(COOLER_RELAY_PIN, HIGH);
+    lastStateChangeTime = millis(); // Update the last state change time
+    if (debug)
+    {
+      hc05.print("[" + formatTime(now) + "]" + " Turning on cooler");
+    }
+  } else if (tF <= targetTemp - coolerHysteresis) {
+    digitalWrite(COOLER_RELAY_PIN, LOW);
+    lastStateChangeTime = millis(); // Update the last state change time
+    if (debug)
+    {
+      hc05.print("[" + formatTime(now) + "]" + " Turning off cooler");
+    }
+  }
+}
+
+// Humidifier control based on current humidity
+if (millis() - lastStateChangeTime >= stateChangeDelay) {
+  bool off = false;
+  bool on = false;
+  if (currentHumidity > maxHumidity) {
+    digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF
+    lastStateChangeTime = millis(); // Update the last state change time
+    off = true;
+  } else if (currentHumidity < targetRH - humidifierHysteresis) {
+    digitalWrite(IOT_RELAY_PIN, HIGH); // Turn ON
+    lastStateChangeTime = millis(); // Update the last state change time
+    on = true;
+  } else if (currentHumidity > targetRH && currentHumidity < targetRH + humidifierHysteresis2 && currentHumidity < prevHumidity) {
+    digitalWrite(IOT_RELAY_PIN, HIGH); // Turn ON
+    lastStateChangeTime = millis(); // Update the last state change time
+    on = true;
+  } else if (currentHumidity < targetRH && currentHumidity > targetRH - humidifierHysteresis2 && currentHumidity > prevHumidity) {
+    digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF
+    lastStateChangeTime = millis(); // Update the last state change time
+    off = true;
+  } else if (currentHumidity > targetRH && currentHumidity > prevHumidity && digitalRead(IOT_RELAY_PIN) == HIGH) {
+    digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF if RH is trending upwards while above target RH and humidifier is ON
+    lastStateChangeTime = millis(); // Update the last state change time
+    off = true;
+  }
+
+  if (debug)
+    {
+      if (off == true)
+      {
+        hc05.print("[" + formatTime(now) + "]" + " Turning off humidifier");
+      }
+
+      if (on == true)
+      {
+        hc05.print("[" + formatTime(now) + "]" + " Turning on humidifier");
+      }
+    }
+}
+
+// Fan control logic base on current humidity
+if (millis() - lastStateChangeTime >= stateChangeDelay) {
+  if (currentHumidity > maxHumidity) {
+    // If humidity exceeds the maximum threshold, set fan speed to maximum
+    fanSpeed = maxFanSpeed;
+    lastStateChangeTime = millis(); // Update the last state change time
+    if (debug)
+    {
+      hc05.print("[" + formatTime(now) + "]" + " Changing fan speed to max");
+    }
+  } else if (currentHumidity < targetRH) {
+    // If humidity is below the target, set fan speed to minimum
+    fanSpeed = minFanSpeed;
+    lastStateChangeTime = millis(); // Update the last state change time
+    if (debug)
+    {
+      hc05.print("[" + formatTime(now) + "]" + " Changing fan speed to min");
+    }
+  } else {
+    // Check if humidity has significantly increased and is above the target
+    if (currentHumidity > prevHumidity + fanSpeedHysteresis && currentHumidity > targetRH) {
+      fanSpeed = maxFanSpeed; // Increase fan speed to the maximum
+      hasPeaked = false; // Reset the 'hasPeaked' flag
+      peakHumidity = currentHumidity; // Update the peak humidity value
+      if (debug)
+      {
+      hc05.print("[" + formatTime(now) + "]" + " Changing fan speed to max");
+      }
+      // Check if humidity has significantly decreased and hasn't peaked yet
+    } else if (currentHumidity < peakHumidity - fanSpeedHysteresis && !hasPeaked) {
+      hasPeaked = true; // Set the 'hasPeaked' flag to true
+    }
+
+    if (hasPeaked) {
+      // If humidity has peaked, gradually reduce fan speed but keep it above the minimum
+      fanSpeed = max(minFanSpeed, fanSpeed - minFanSpeed);
+      if (debug)
+      {
+      hc05.print("[" + formatTime(now) + "]" + " Reducing fan speed slowly to min");
+      }
+    }
+
+    // Ensure fan speed stays within the defined minimum and maximum values
+    fanSpeed = constrain(fanSpeed, minFanSpeed, maxFanSpeed); // Constrain fanSpeed between min and max speeds
+    lastStateChangeTime = millis(); // Update the last state change time
+  }
+}
+
+  // Write fan speed to fans
+  analogWrite(FAN1_PIN, fanSpeed);
+  analogWrite(FAN2_PIN, fanSpeed);
+
+  // Output data to serial
+  Serial.print(now.year(), DEC);
+  Serial.print('/');
+  Serial.print(now.month(), DEC);
+  Serial.print('/');
+  Serial.print(now.day(), DEC);
+  Serial.print(" ");
+  Serial.print(now.hour(), DEC);
+  Serial.print(':');
+  Serial.print(now.minute(), DEC);
+  Serial.print(':');
+  Serial.print(now.second(), DEC);
+  Serial.print(", Dry Bulb Temp: ");
+  Serial.print(tF);
+  Serial.print("Average Temperature In Past Hour: ");
+  Serial.print(avgTemperature);
+  Serial.print(", RH: ");
+  Serial.print(currentHumidity);
+  Serial.print("Average Humidity In Past Hour: ");
+  Serial.print(avgHumidity);
+  Serial.print(", Fan Speed: ");
+  Serial.print(fanSpeed);
+  Serial.print(", Cooler: ");
+  Serial.print(digitalRead(COOLER_RELAY_PIN) == HIGH ? "ON" : "OFF");
+  Serial.print(", Humidifier: ");
+  Serial.println(digitalRead(IOT_RELAY_PIN) == HIGH ? "ON" : "OFF");
+
+  prevHumidity = currentHumidity; // Update previous humidity
+
+  // Check for bluetooth HC-05 commands
+  if (hc05.available()) {
+    String command = hc05.readString();
+    handleCommand(command, tF, currentHumidity, fanSpeed);
+  }
+
+  delay(2000); // Delay of 2 seconds to avoid constant run of code in loop
+}
+
+// Function to fromat the current time into a string
+String formatTime(DateTime now) {
+  // Create a formatted string using the components of the DateTime object
+  String formattedTime = 
+      String(now.year()) + "/" +
+      String(now.month()) + "/" +
+      String(now.day()) + " " +
+      String(now.hour()) + ":" +
+      String(now.minute()) + ":" +
+      String(now.second());
+  
+  return formattedTime;
+}
+
 // Function to update average temp and humidity over time
 void updateAverages() {
   totalTemperature += dht.readTemperature();
   totalHumidity += dht.readHumidity();
   samplesPerHour++;
+}
+
+// Function to find the current dew point from the current CELSIUS temp and rH
+float calculateDewPoint(float temperature, float relativeHumidity) {
+  
+  // Check if RH is outside the valid range (0-100%)
+  if (relativeHumidity < 0.0 || relativeHumidity > 100.0) {
+    // Return 0 if rh is outside range
+    return 0; 
+  }
+
+  // Calculate dew point using a simple formula (can be improved by using the August-Roche-Magnus approximation)
+  float dewPoint = temperature - ((100.0 - relativeHumidity) / 5.0);
+  
+  // Convert dew point to fahrenheit
+  float dewPointFahrenheit = toFahrenheit(dewPoint);
+
+  return dewPoint;
 }
 
 // Function to calculate the target relative humidity based on the current time
@@ -99,142 +320,6 @@ float getTargetRH(DateTime currentTime) {
   return currentTargetRH; // Return the calculated current target relative humidity
 }
 
-void loop() {
-  float currentHumidity = dht.readHumidity();
-  float tC = dht.readTemperature(); // Celsius
-  float tF = toFahrenheit(tC); // Fahrenheit
-  DateTime now = rtc.now();
-  targetRH = getTargetRH(now);
-
-  // Update temp and humid averages every hour
-  if (now.minute() == 0) {
-    if (samplesPerHour > 0) {
-      // Calculate average temp and humid
-      avgTemperature = totalTemperature / samplesPerHour;
-      avgHumidity = totalHumidity / samplesPerHour;
-      
-      // Reset accumulators and counter
-      totalTemperature = 0.0;
-      totalHumidity = 0.0;
-      samplesPerHour = 0;
-    }
-  }
-
-  // Define delay constants
-const unsigned long stateChangeDelay = 3000; // 3 seconds (adjust as needed)
-static unsigned long lastStateChangeTime = 0; // Time of last state change in milliseconds
-
-// Cooler control with hysteresis based off current fahrenheit temperature
-const float coolerHysteresis = 0.1;
-if (millis() - lastStateChangeTime >= stateChangeDelay) {
-  if (tF >= targetTemp + coolerHysteresis) {
-    digitalWrite(COOLER_RELAY_PIN, HIGH);
-    lastStateChangeTime = millis(); // Update the last state change time
-  } else if (tF <= targetTemp - coolerHysteresis) {
-    digitalWrite(COOLER_RELAY_PIN, LOW);
-    lastStateChangeTime = millis(); // Update the last state change time
-  }
-}
-
-// Humidifier control based on current humidity
-const float humidifierHysteresis = 3.0;
-const float humidifierHysteresis2 = 1.5;
-if (millis() - lastStateChangeTime >= stateChangeDelay) {
-  if (currentHumidity > maxHumidity) {
-    digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF
-    lastStateChangeTime = millis(); // Update the last state change time
-  } else if (currentHumidity < targetRH - humidifierHysteresis) {
-    digitalWrite(IOT_RELAY_PIN, HIGH); // Turn ON
-    lastStateChangeTime = millis(); // Update the last state change time
-  } else if (currentHumidity > targetRH && currentHumidity < targetRH + humidifierHysteresis2 && currentHumidity < prevHumidity) {
-    digitalWrite(IOT_RELAY_PIN, HIGH); // Turn ON
-    lastStateChangeTime = millis(); // Update the last state change time
-  } else if (currentHumidity < targetRH && currentHumidity > targetRH - humidifierHysteresis2 && currentHumidity > prevHumidity) {
-    digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF
-    lastStateChangeTime = millis(); // Update the last state change time
-  } else if (currentHumidity > targetRH && currentHumidity > prevHumidity && digitalRead(IOT_RELAY_PIN) == HIGH) {
-    digitalWrite(IOT_RELAY_PIN, LOW); // Turn OFF if RH is trending upwards while above target RH and humidifier is ON
-    lastStateChangeTime = millis(); // Update the last state change time
-  }
-}
-
-// Fan control logic base on current humidity
-const float fanSpeedHysteresis = 0.1;
-if (millis() - lastStateChangeTime >= stateChangeDelay) {
-  if (currentHumidity > maxHumidity) {
-    // If humidity exceeds the maximum threshold, set fan speed to maximum
-    fanSpeed = maxFanSpeed;
-    lastStateChangeTime = millis(); // Update the last state change time
-  } else if (currentHumidity < targetRH) {
-    // If humidity is below the target, set fan speed to minimum
-    fanSpeed = minFanSpeed;
-    lastStateChangeTime = millis(); // Update the last state change time
-  } else {
-    // Check if humidity has significantly increased and is above the target
-    if (currentHumidity > prevHumidity + fanSpeedHysteresis && currentHumidity > targetRH) {
-      fanSpeed = maxFanSpeed; // Increase fan speed to the maximum
-      hasPeaked = false; // Reset the 'hasPeaked' flag
-      peakHumidity = currentHumidity; // Update the peak humidity value
-      // Check if humidity has significantly decreased and hasn't peaked yet
-    } else if (currentHumidity < peakHumidity - fanSpeedHysteresis && !hasPeaked) {
-      hasPeaked = true; // Set the 'hasPeaked' flag to true
-    }
-
-    if (hasPeaked) {
-      // If humidity has peaked, gradually reduce fan speed but keep it above the minimum
-      fanSpeed = max(minFanSpeed, fanSpeed - minFanSpeed);
-    }
-
-    // Ensure fan speed stays within the defined minimum and maximum values
-    fanSpeed = constrain(fanSpeed, minFanSpeed, maxFanSpeed); // Constrain fanSpeed between min and max speeds
-    lastStateChangeTime = millis(); // Update the last state change time
-  }
-}
-
-
-  // Write fan speed to fans
-  analogWrite(FAN1_PIN, fanSpeed);
-  analogWrite(FAN2_PIN, fanSpeed);
-
-  // Output data to serial
-  Serial.print(now.year(), DEC);
-  Serial.print('/');
-  Serial.print(now.month(), DEC);
-  Serial.print('/');
-  Serial.print(now.day(), DEC);
-  Serial.print(" ");
-  Serial.print(now.hour(), DEC);
-  Serial.print(':');
-  Serial.print(now.minute(), DEC);
-  Serial.print(':');
-  Serial.print(now.second(), DEC);
-  Serial.print(", Dry Bulb Temp: ");
-  Serial.print(tF);
-  Serial.print("Average Temperature In Past Hour: ");
-  Serial.print(avgTemperature);
-  Serial.print(", RH: ");
-  Serial.print(currentHumidity);
-  Serial.print("Average Humidity In Past Hour: ");
-  Serial.print(avgHumidity);
-  Serial.print(", Fan Speed: ");
-  Serial.print(fanSpeed);
-  Serial.print(", Cooler: ");
-  Serial.print(digitalRead(COOLER_RELAY_PIN) == HIGH ? "ON" : "OFF");
-  Serial.print(", Humidifier: ");
-  Serial.println(digitalRead(IOT_RELAY_PIN) == HIGH ? "ON" : "OFF");
-
-  // Update previous humidity
-  prevHumidity = currentHumidity;
-
-  // Check for bluetooth HC-05 commands
-  if (hc05.available()) {
-    String command = hc05.readString();
-    handleCommand(command, tF, currentHumidity, fanSpeed);
-  }
-
-  delay(2000);
-}
-
 // Function to convert celcius to fahrenheit
 float toFahrenheit(float celcius) {
   float fahrenheit = celcius * 9.0 / 5.0 + 32.0; // Algorithim responsible for conversion
@@ -256,7 +341,7 @@ void handleCommand(String command, float tF, float currentHumidity, int fanSpeed
     TimeSpan elapsed = rtc.now() - startCycleTime;
     float cycleCompletion = (isDryCycle ? elapsed.days() / 6.0 : elapsed.days() / 30.0) * 100;
 
-    hc05.print("Dry Bulb Temp: ");
+    hc05.print("Target Dry Bulb Temp Fahrenheit: ");
     hc05.print(targetTemp);
     hc05.print(", RH Target: ");
     hc05.print(targetRH);
@@ -279,14 +364,16 @@ void handleCommand(String command, float tF, float currentHumidity, int fanSpeed
   and humidifier status (ON/OFF)
   */
   else if (command.startsWith("DATAREQ")) {
-    hc05.print("Dry Bulb Temp: ");
+    hc05.print("Dry Bulb Temp Fahrenheit: ");
     hc05.print(tF);
-    hc05.print("Average Temperature In Past Hour: ");
+    hc05.print(", Average Temperature Fahrenheit In Past Hour: ");
     hc05.print(avgTemperature);
     hc05.print(", RH: ");
     hc05.print(currentHumidity);
-    hc05.print("Average Humidity In Past Hour: ");
+    hc05.print(", Average Humidity In Past Hour: ");
     hc05.print(avgHumidity);
+    hc05.print(", Dew Point Fahrenheit: ");
+    hc05.print(calculateDewPoint(tC, currentHumidity));
     hc05.print(", Fan Speed: ");
     hc05.print(fanSpeed);
     hc05.print(", Cooler: ");
@@ -321,6 +408,15 @@ void handleCommand(String command, float tF, float currentHumidity, int fanSpeed
   */
   else if (command.startsWith("SET_RH")) {
     targetRH = command.substring(7).toFloat();
+    customRH = true;
+  }
+  /*
+  RESET_RH
+  This command resets the target relative humidity 
+  to be automatically controlled again
+  */
+  else if (command.startsWith("RESET_RH")) {
+    customRH = false;
   }
   /*
    START_DRY_CYCLE
@@ -337,5 +433,33 @@ void handleCommand(String command, float tF, float currentHumidity, int fanSpeed
   else if (command.startsWith("START_CURE_CYCLE")) {
     isDryCycle = false;
     startCycleTime = rtc.now();
+  }
+  /*
+    HELP
+    Display this list of available commands
+  */
+  else if (command.startsWith("HELP")) {
+    hc05.println("Available Commands:");
+    hc05.println("REPORT - Retrieve a report including temperature, RH, cycle info, and more");
+    hc05.println("DATAREQ - Request data like temperature, humidity, fan speed, and device status");
+    hc05.println("SET_TEMPF <value> - Set the target temperature in Fahrenheit");
+    hc05.println("SET_TEMPC <value> - Set the target temperature in Celsius");
+    hc05.println("SET_RH <value> - Set the target relative humidity");
+    hc05.println("RESET_RH - Resets the target relative humidity to be automatically controlled again");
+    hc05.println("START_DRY_CYCLE - Initiate the dry cycle");
+    hc05.println("START_CURE_CYCLE - Initiate the cure cycle");
+    hc05.println("DEBUG - Toggles debug mode which log messages to HC05 for debugging");
+    hc05.println("HELP - Display this list of available commands");
+  }
+  /*
+    DEBUG
+    Toggles debug mode which log messages to HC05 for debugging
+  */
+  else if (command.startsWith("DEBUG")) {
+    debug = !debug;
+  }
+  // Invalid command entered
+  else {
+    hc05.print(command + " is an invalid command, please use command HELP for more info");
   }
 }
